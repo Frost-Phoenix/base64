@@ -7,7 +7,7 @@ const print = std.debug.print;
 
 // ********** //
 
-const chr = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const encode_table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const padding = '=';
 
 // ********** //
@@ -20,20 +20,58 @@ pub fn main() !void {
     const encoded = try encode(allocator, "Base64 encoded string :)");
     defer allocator.free(encoded);
 
-    print("{s}\n", .{encoded});
+    const decoded = try decode(allocator, encoded);
+    defer allocator.free(decoded);
+
+    print("Encoded: {s}\n", .{encoded});
+    print("Decoded: {s}\n", .{decoded});
 }
 
 fn getEncodedSize(data: []const u8) usize {
     return ((data.len + 2) / 3) * 4;
 }
 
+fn getDecodedSize(data: []const u8) usize {
+    var size = data.len / 4 * 3;
+
+    if (std.mem.endsWith(u8, data, "==")) {
+        size -= 2;
+    } else if (std.mem.endsWith(u8, data, "=")) {
+        size -= 1;
+    }
+
+    return size;
+}
+
 fn getEncodedChr(idx: usize) u8 {
     assert(idx < 64);
 
-    return chr[idx];
+    return encode_table[idx];
+}
+
+const DecodeError = error{
+    InvalideChr,
+};
+
+fn getDecodedIdx(chr: u8) DecodeError!u8 {
+    return switch (chr) {
+        '=' => 0,
+        'A'...'Z' => |c| c - 'A',
+        'a'...'z' => |c| c - 'a' + 26,
+        '0'...'9' => |c| c - '0' + 52,
+        '+' => 62,
+        '/' => 63,
+        else => {
+            return DecodeError.InvalideChr;
+        },
+    };
 }
 
 fn encode(allocator: Allocator, data: []const u8) ![]const u8 {
+    if (data.len == 0) {
+        return "";
+    }
+
     const encoded_size = getEncodedSize(data);
     const encoded = try allocator.alloc(u8, encoded_size);
 
@@ -62,21 +100,98 @@ fn encode(allocator: Allocator, data: []const u8) ![]const u8 {
     return encoded;
 }
 
+fn decode(allocator: Allocator, data: []const u8) ![]const u8 {
+    if (data.len == 0) {
+        return "";
+    }
+
+    const decoded_size = getDecodedSize(data);
+    const decoded = try allocator.alloc(u8, decoded_size);
+
+    const nb_chunks = data.len / 4;
+    for (0..nb_chunks - 1) |i| {
+        const idx = i * 4;
+
+        decoded[i * 3 + 0] = (try getDecodedIdx(data[idx]) << 2) | (try getDecodedIdx(data[idx + 1]) >> 4);
+        decoded[i * 3 + 1] = (try getDecodedIdx(data[idx + 1]) << 4) | (try getDecodedIdx(data[idx + 2]) >> 2);
+        decoded[i * 3 + 2] = (try getDecodedIdx(data[idx + 2]) << 6) | (try getDecodedIdx(data[idx + 3]));
+    }
+
+    if (!std.mem.endsWith(u8, data, "=")) {
+        decoded[decoded_size - 3] = (try getDecodedIdx(data[data.len - 4]) << 2) | (try getDecodedIdx(data[data.len - 3]) >> 4);
+        decoded[decoded_size - 2] = (try getDecodedIdx(data[data.len - 3]) << 4) | (try getDecodedIdx(data[data.len - 2]) >> 2);
+        decoded[decoded_size - 1] = (try getDecodedIdx(data[data.len - 2]) << 6) | (try getDecodedIdx(data[data.len - 1]));
+    } else if (std.mem.endsWith(u8, data, "==")) {
+        decoded[decoded_size - 1] = (try getDecodedIdx(data[data.len - 4]) << 2) | (try getDecodedIdx(data[data.len - 3]) >> 4);
+    } else {
+        decoded[decoded_size - 2] = (try getDecodedIdx(data[data.len - 4]) << 2) | (try getDecodedIdx(data[data.len - 3]) >> 4);
+        decoded[decoded_size - 1] = (try getDecodedIdx(data[data.len - 3]) << 4) | (try getDecodedIdx(data[data.len - 2]) >> 2);
+    }
+
+    return decoded;
+}
+
 test "encode" {
     const test_allocator = std.testing.allocator;
 
-    const no_padding = try encode(test_allocator, "simple test.");
-    const one_padding = try encode(test_allocator, "simple test");
-    const two_padding = try encode(test_allocator, "simpletest");
-    const empty = try encode(test_allocator, "");
+    const no_padding = "simple test.";
+    const one_padding = "simple test";
+    const two_padding = "simpletest";
+    const empty = "";
 
-    defer test_allocator.free(no_padding);
-    defer test_allocator.free(one_padding);
-    defer test_allocator.free(two_padding);
-    defer test_allocator.free(empty);
+    const no_padding_encoded = try encode(test_allocator, no_padding);
+    const one_padding_encoded = try encode(test_allocator, one_padding);
+    const two_padding_encoded = try encode(test_allocator, two_padding);
+    const empty_encoded = try encode(test_allocator, empty);
 
-    try std.testing.expectEqualSlices(u8, "c2ltcGxlIHRlc3Qu", no_padding);
-    try std.testing.expectEqualSlices(u8, "c2ltcGxlIHRlc3Q=", one_padding);
-    try std.testing.expectEqualSlices(u8, "", empty);
-    try std.testing.expect(empty.len == 0);
+    defer test_allocator.free(no_padding_encoded);
+    defer test_allocator.free(one_padding_encoded);
+    defer test_allocator.free(two_padding_encoded);
+    defer test_allocator.free(empty_encoded);
+
+    try expectEqualSlices(u8, "c2ltcGxlIHRlc3Qu", no_padding_encoded);
+    try expectEqualSlices(u8, "c2ltcGxlIHRlc3Q=", one_padding_encoded);
+    try expectEqualSlices(u8, "c2ltcGxldGVzdA==", two_padding_encoded);
+    try expectEqualSlices(u8, "", empty_encoded);
+    try expect(empty_encoded.len == 0);
 }
+
+test "decode" {
+    const test_allocator = std.testing.allocator;
+
+    const no_padding = "simple test.";
+    const one_padding = "simple test";
+    const two_padding = "simpletest";
+    const empty = "";
+
+    const no_padding_encoded = try encode(test_allocator, no_padding);
+    const one_padding_encoded = try encode(test_allocator, one_padding);
+    const two_padding_encoded = try encode(test_allocator, two_padding);
+    const empty_encoded = try encode(test_allocator, empty);
+
+    defer test_allocator.free(no_padding_encoded);
+    defer test_allocator.free(one_padding_encoded);
+    defer test_allocator.free(two_padding_encoded);
+    defer test_allocator.free(empty_encoded);
+
+    const no_padding_decoded = try decode(test_allocator, no_padding_encoded);
+    const one_padding_decoded = try decode(test_allocator, one_padding_encoded);
+    const two_padding_decoded = try decode(test_allocator, two_padding_encoded);
+    const empty_decoded = try decode(test_allocator, empty_encoded);
+
+    defer test_allocator.free(no_padding_decoded);
+    defer test_allocator.free(one_padding_decoded);
+    defer test_allocator.free(two_padding_decoded);
+    defer test_allocator.free(empty_decoded);
+
+    try expectEqualSlices(u8, no_padding, no_padding_decoded);
+    try expectEqualSlices(u8, one_padding, one_padding_decoded);
+    try expectEqualSlices(u8, two_padding, two_padding_decoded);
+    try expectEqualSlices(u8, empty, empty_encoded);
+    try expect(empty_decoded.len == 0);
+}
+
+const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+const expectError = std.testing.expectError;
+const expectEqualSlices = std.testing.expectEqualSlices;
