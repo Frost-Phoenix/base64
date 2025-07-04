@@ -1,5 +1,7 @@
 const std = @import("std");
-const print = std.debug.print;
+
+const exitError = @import("common.zig").exitError;
+
 const eql = std.mem.eql;
 
 const Allocator = std.mem.Allocator;
@@ -52,11 +54,11 @@ pub fn parseArgs(allocator: Allocator) !Options {
             } else if (eql(u8, arg[2..], "wrap")) {
                 i += 1;
                 if (!(i < args.len)) {
-                    try exitError(name, "{s}: option '{s}' requires an argument\n", .{ name, arg });
+                    try exitError("{s}: option '{s}' requires an argument\n", .{ name, arg });
                 }
                 options.line_wrap = try std.fmt.parseUnsigned(u32, args[i], 0);
             } else {
-                try exitError(name, "{s}: unrecognized option '{s}'\n", .{ name, arg });
+                try exitError("{s}: unrecognized option '{s}'\n", .{ name, arg });
             }
         } else if (std.mem.startsWith(u8, arg, "-")) {
             for (arg[1..]) |c| {
@@ -67,32 +69,27 @@ pub fn parseArgs(allocator: Allocator) !Options {
                     'w' => {
                         i += 1;
                         if (!(i < args.len)) {
-                            try exitError(name, "{s}: option '-{c}' requires an argument\n", .{ name, c });
+                            try exitError("{s}: option '-{c}' requires an argument\n", .{ name, c });
                         }
                         options.line_wrap = try std.fmt.parseUnsigned(u32, args[i], 0);
                     },
-                    else => try exitError(name, "{s}: unrecognized option '-{c}'\n", .{ name, c }),
+                    else => try exitError("{s}: unrecognized option '-{c}'\n", .{ name, c }),
                 }
             }
         } else {
             if (options.file != null) {
-                try exitError(name, "{s}: extra operand '{s}'\n", .{ name, arg });
+                try exitError("{s}: extra operand '{s}'\n", .{ name, arg });
             }
 
             options.file = try allocator.dupe(u8, arg);
         }
     }
 
+    if (options.file == null) {
+        try exitError("{s}: no file provided", .{name});
+    }
+
     return options;
-}
-
-fn exitError(name: []const u8, comptime msg: []const u8, args: anytype) !void {
-    const stderr_writer = std.io.getStdErr().writer();
-
-    try std.fmt.format(stderr_writer, msg, args);
-    try std.fmt.format(stderr_writer, "Try '{s} --help' for more information.\n", .{name});
-
-    std.process.exit(1);
 }
 
 fn printHelp() !void {
