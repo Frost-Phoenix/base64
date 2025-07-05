@@ -68,6 +68,7 @@ pub const Base64 = struct {
 
         const encoded_size = getEncodedSize(data);
         const encoded = try self.allocator.alloc(u8, encoded_size);
+        errdefer self.allocator.free(encoded);
 
         const nb_full_chunks = data.len / 3;
         for (0..nb_full_chunks) |i| {
@@ -101,6 +102,7 @@ pub const Base64 = struct {
 
         const decoded_size = getDecodedSize(data);
         const decoded = try self.allocator.alloc(u8, decoded_size);
+        errdefer self.allocator.free(decoded);
 
         const nb_chunks = data.len / 4;
         for (0..nb_chunks - 1) |i| {
