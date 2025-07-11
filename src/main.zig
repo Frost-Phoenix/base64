@@ -33,7 +33,7 @@ pub fn main() !void {
             return error.IncompleteRead;
         }
 
-        const base64: Base64 = .init(allocator);
+        const base64: Base64 = .init(allocator, options.ignore_garbage);
 
         const result = blk: {
             if (options.decode) {
@@ -46,7 +46,7 @@ pub fn main() !void {
 
         const stdout = std.io.getStdOut();
 
-        if (options.line_wrap == 0) {
+        if (options.decode or options.line_wrap == 0) {
             try stdout.writeAll(result);
         } else {
             const len = result.len;

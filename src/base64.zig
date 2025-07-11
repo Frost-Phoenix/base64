@@ -8,11 +8,15 @@ const print = std.debug.print;
 // ********** //
 
 const DecodeError = error{
-    InvalideChar,
+    InvalidChar,
+    InvalidLength,
+    InvalidPadding,
 };
 
 pub const Base64 = struct {
     allocator: Allocator,
+
+    ignore_garbage: bool,
 
     const Self = @This();
 
@@ -41,22 +45,21 @@ pub const Base64 = struct {
         return size;
     }
 
-    fn getEncodedChr(idx: usize) u8 {
+    fn encodeValue(idx: usize) u8 {
         assert(idx < 64);
 
         return encode_table[idx];
     }
 
-    fn getDecodedIdx(chr: u8) DecodeError!u8 {
+    fn decodeValue(chr: u8) DecodeError!u8 {
         return switch (chr) {
-            '=' => 0,
             'A'...'Z' => |c| c - 'A',
             'a'...'z' => |c| c - 'a' + 26,
             '0'...'9' => |c| c - '0' + 52,
             '+' => 62,
             '/' => 63,
             else => {
-                return DecodeError.InvalideChar;
+                return DecodeError.InvalidChar;
             },
         };
     }
@@ -72,22 +75,23 @@ pub const Base64 = struct {
 
         const nb_full_chunks = data.len / 3;
         for (0..nb_full_chunks) |i| {
-            const encoded_idx = i * 3;
+            const data_idx = i * 3;
+            const encoded_idx = i * 4;
 
-            encoded[i * 4 + 0] = getEncodedChr(data[encoded_idx] >> 2);
-            encoded[i * 4 + 1] = getEncodedChr(((data[encoded_idx] & 0x03) << 4) | (data[encoded_idx + 1] >> 4));
-            encoded[i * 4 + 2] = getEncodedChr(((data[encoded_idx + 1] & 0x0f) << 2) | (data[encoded_idx + 2] >> 6));
-            encoded[i * 4 + 3] = getEncodedChr(data[encoded_idx + 2] & 0x3f);
+            encoded[encoded_idx + 0] = encodeValue(data[data_idx] >> 2);
+            encoded[encoded_idx + 1] = encodeValue(((data[data_idx] & 0x03) << 4) | (data[data_idx + 1] >> 4));
+            encoded[encoded_idx + 2] = encodeValue(((data[data_idx + 1] & 0x0f) << 2) | (data[data_idx + 2] >> 6));
+            encoded[encoded_idx + 3] = encodeValue(data[data_idx + 2] & 0x3f);
         }
 
         if (data.len % 3 == 2) {
-            encoded[encoded_size - 4] = getEncodedChr(data[data.len - 2] >> 2);
-            encoded[encoded_size - 3] = getEncodedChr(((data[data.len - 2] & 0x03) << 4) | (data[data.len - 1] >> 4));
-            encoded[encoded_size - 2] = getEncodedChr((data[data.len - 1] & 0x0f) << 2);
+            encoded[encoded_size - 4] = encodeValue(data[data.len - 2] >> 2);
+            encoded[encoded_size - 3] = encodeValue(((data[data.len - 2] & 0x03) << 4) | (data[data.len - 1] >> 4));
+            encoded[encoded_size - 2] = encodeValue((data[data.len - 1] & 0x0f) << 2);
             encoded[encoded_size - 1] = padding;
         } else if (data.len % 3 == 1) {
-            encoded[encoded_size - 4] = getEncodedChr(data[data.len - 1] >> 2);
-            encoded[encoded_size - 3] = getEncodedChr(((data[data.len - 1] & 0x03) << 4));
+            encoded[encoded_size - 4] = encodeValue(data[data.len - 1] >> 2);
+            encoded[encoded_size - 3] = encodeValue(((data[data.len - 1] & 0x03) << 4));
             encoded[encoded_size - 2] = padding;
             encoded[encoded_size - 1] = padding;
         }
@@ -106,22 +110,23 @@ pub const Base64 = struct {
 
         const nb_chunks = data.len / 4;
         for (0..nb_chunks - 1) |i| {
-            const idx = i * 4;
+            const data_idx = i * 4;
+            const decoded_idx = i * 3;
 
-            decoded[i * 3 + 0] = (try getDecodedIdx(data[idx]) << 2) | (try getDecodedIdx(data[idx + 1]) >> 4);
-            decoded[i * 3 + 1] = (try getDecodedIdx(data[idx + 1]) << 4) | (try getDecodedIdx(data[idx + 2]) >> 2);
-            decoded[i * 3 + 2] = (try getDecodedIdx(data[idx + 2]) << 6) | (try getDecodedIdx(data[idx + 3]));
+            decoded[decoded_idx + 0] = (try decodeValue(data[data_idx]) << 2) | (try decodeValue(data[data_idx + 1]) >> 4);
+            decoded[decoded_idx + 1] = (try decodeValue(data[data_idx + 1]) << 4) | (try decodeValue(data[data_idx + 2]) >> 2);
+            decoded[decoded_idx + 2] = (try decodeValue(data[data_idx + 2]) << 6) | (try decodeValue(data[data_idx + 3]));
         }
 
         if (!std.mem.endsWith(u8, data, "=")) {
-            decoded[decoded_size - 3] = (try getDecodedIdx(data[data.len - 4]) << 2) | (try getDecodedIdx(data[data.len - 3]) >> 4);
-            decoded[decoded_size - 2] = (try getDecodedIdx(data[data.len - 3]) << 4) | (try getDecodedIdx(data[data.len - 2]) >> 2);
-            decoded[decoded_size - 1] = (try getDecodedIdx(data[data.len - 2]) << 6) | (try getDecodedIdx(data[data.len - 1]));
+            decoded[decoded_size - 3] = (try decodeValue(data[data.len - 4]) << 2) | (try decodeValue(data[data.len - 3]) >> 4);
+            decoded[decoded_size - 2] = (try decodeValue(data[data.len - 3]) << 4) | (try decodeValue(data[data.len - 2]) >> 2);
+            decoded[decoded_size - 1] = (try decodeValue(data[data.len - 2]) << 6) | (try decodeValue(data[data.len - 1]));
         } else if (std.mem.endsWith(u8, data, "==")) {
-            decoded[decoded_size - 1] = (try getDecodedIdx(data[data.len - 4]) << 2) | (try getDecodedIdx(data[data.len - 3]) >> 4);
+            decoded[decoded_size - 1] = (try decodeValue(data[data.len - 4]) << 2) | (try decodeValue(data[data.len - 3]) >> 4);
         } else {
-            decoded[decoded_size - 2] = (try getDecodedIdx(data[data.len - 4]) << 2) | (try getDecodedIdx(data[data.len - 3]) >> 4);
-            decoded[decoded_size - 1] = (try getDecodedIdx(data[data.len - 3]) << 4) | (try getDecodedIdx(data[data.len - 2]) >> 2);
+            decoded[decoded_size - 2] = (try decodeValue(data[data.len - 4]) << 2) | (try decodeValue(data[data.len - 3]) >> 4);
+            decoded[decoded_size - 1] = (try decodeValue(data[data.len - 3]) << 4) | (try decodeValue(data[data.len - 2]) >> 2);
         }
 
         return decoded;
@@ -190,6 +195,10 @@ test "decode" {
     try expectEqualSlices(u8, two_padding, two_padding_decoded);
     try expectEqualSlices(u8, empty, empty_decoded);
     try expect(empty_decoded.len == 0);
+}
+
+test "decode_error" {
+    // TODO
 }
 
 const expect = std.testing.expect;
